@@ -1,38 +1,38 @@
 import React, { useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { PriceProvider } from './contexts/PriceContext';
 import Layout from './components/Layout';
-import Home from './pages/Home';
-import Services from './pages/Services';
-import Process from './pages/Process';
-import About from './pages/About';
-import Contact from './pages/Contact';
-import Legal from './pages/Legal';
+import Dashboard from './pages/Dashboard';
+import Sentinel from './pages/Sentinel';
+import Trading from './pages/Trading';
+import News from './pages/News';
+import Portfolio from './pages/Portfolio';
+import Orders from './pages/Orders';
+import Settings from './pages/Settings';
 
-// Scroll to top helper
 const ScrollToTop = () => {
   const { pathname } = useLocation();
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [pathname]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   return null;
 };
 
-const App: React.FC = () => {
-  return (
-    <Router>
+const App: React.FC = () => (
+  <Router>
+    <PriceProvider>
       <ScrollToTop />
       <Layout>
         <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/services" element={<Services />} />
-          <Route path="/process" element={<Process />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/contact" element={<Contact />} />
-          <Route path="/legal" element={<Legal />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/sentinel" element={<Sentinel />} />
+          <Route path="/trading" element={<Trading />} />
+          <Route path="/news" element={<News />} />
+          <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/orders" element={<Orders />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>
-    </Router>
-  );
-};
+    </PriceProvider>
+  </Router>
+);
 
 export default App;
