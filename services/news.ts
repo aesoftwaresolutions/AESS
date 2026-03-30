@@ -1,11 +1,53 @@
 /** Unified news / social-media / sentiment service.
  *
- *  Sources (all proxied through Vite dev server):
- *   - Alternative.me  Fear & Greed Index    → /feargreed/…
- *   - Reddit JSON API                        → /reddit/…
- *   - CryptoPanic API (optional token)       → /cryptopanic/…
- *   - CoinGecko trending + news              → /coingecko/…
+ *  In the browser (Vite dev server) requests are proxied to avoid CORS:
+ *   - /feargreed/…    → https://api.alternative.me/…
+ *   - /reddit/…       → https://www.reddit.com/…
+ *   - /cryptopanic/…  → https://cryptopanic.com/…
+ *   - /coingecko/…    → https://api.coingecko.com/…
+ *
+ *  On iOS/Android (Capacitor) CapacitorHttp is used, which routes requests
+ *  through the native networking stack — no CORS restrictions apply, so we
+ *  call the external APIs directly.
  */
+
+// ─── Platform-aware fetch ─────────────────────────────────────────────────────
+
+import { CapacitorHttp } from '@capacitor/core';
+
+function isNative(): boolean {
+  return !!(window as unknown as Record<string, unknown>).Capacitor &&
+    !!(
+      (window as unknown as Record<string, { isNativePlatform?: () => boolean }>)
+        .Capacitor?.isNativePlatform?.()
+    );
+}
+
+/** URL map: proxy-path prefix → real host (used on native only) */
+const PROXY_HOSTS: Record<string, string> = {
+  '/feargreed': 'https://api.alternative.me',
+  '/reddit':    'https://www.reddit.com',
+  '/cryptopanic': 'https://cryptopanic.com',
+  '/coingecko': 'https://api.coingecko.com',
+};
+
+async function nativeFetch(proxyUrl: string): Promise<unknown> {
+  // Convert proxy path to real URL for native
+  const realUrl = Object.entries(PROXY_HOSTS).reduce(
+    (url, [prefix, host]) => url.startsWith(prefix) ? host + url.slice(prefix.length) : url,
+    proxyUrl
+  );
+  const res = await CapacitorHttp.get({ url: realUrl, headers: { 'User-Agent': 'AESS-Trade/1.0' } });
+  if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
+  return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+}
+
+async function apiFetch(proxyUrl: string): Promise<unknown> {
+  if (isNative()) return nativeFetch(proxyUrl);
+  const res = await fetch(proxyUrl);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,10 +157,8 @@ function inferSentiment(text: string, positiveVotes = 0, negativeVotes = 0): Sen
 
 export async function getFearGreed(): Promise<FearGreedData | null> {
   try {
-    const res = await fetch('/feargreed/fng/?limit=1&format=json');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const item = data.data?.[0];
+    const data = await apiFetch('/feargreed/fng/?limit=1&format=json') as Record<string, unknown[]>;
+    const item = (data.data as Record<string, unknown>[])?.[0];
     if (!item) return null;
     return {
       value: parseInt(item.value, 10),
@@ -135,9 +175,7 @@ export async function getFearGreed(): Promise<FearGreedData | null> {
 const SUBREDDITS = ['CryptoCurrency', 'Bitcoin', 'ethereum', 'CryptoMarkets'];
 
 async function fetchSubreddit(subreddit: string, limit = 20): Promise<NewsItem[]> {
-  const res = await fetch(`/reddit/r/${subreddit}/hot.json?limit=${limit}&raw_json=1`);
-  if (!res.ok) throw new Error(`Reddit ${subreddit}: HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await apiFetch(`/reddit/r/${subreddit}/hot.json?limit=${limit}&raw_json=1`) as Record<string, unknown>;
   return (data.data?.children ?? []).map((post: Record<string, Record<string, unknown>>) => {
     const d = post.data;
     const title = String(d.title ?? '');
@@ -177,9 +215,7 @@ export async function getCryptoPanicNews(currencies?: string[]): Promise<NewsIte
     const params = new URLSearchParams({ auth_token: token, public: 'true', kind: 'news' });
     if (currencies?.length) params.set('currencies', currencies.slice(0, 5).join(','));
 
-    const res = await fetch(`/cryptopanic/api/v1/posts/?${params}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await apiFetch(`/cryptopanic/api/v1/posts/?${params}`) as Record<string, unknown>;
 
     return (data.results ?? []).map((item: Record<string, unknown>) => {
       const votes = (item.votes as Record<string, number>) ?? {};
@@ -209,9 +245,7 @@ export async function getCryptoPanicNews(currencies?: string[]): Promise<NewsIte
 
 export async function getTrendingCoins(): Promise<TrendingCoin[]> {
   try {
-    const res = await fetch('/coingecko/api/v3/search/trending');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await apiFetch('/coingecko/api/v3/search/trending') as Record<string, unknown>;
     return (data.coins ?? []).map((c: Record<string, Record<string, unknown>>) => ({
       id: String(c.item.id),
       name: String(c.item.name),

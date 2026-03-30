@@ -46,6 +46,12 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [react()],
+    build: {
+      // Capacitor reads from 'dist' (matches webDir in capacitor.config.ts)
+      outDir: 'dist',
+      // Inline small assets to reduce file-not-found issues on iOS file:// scheme
+      assetsInlineLimit: 4096,
+    },
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

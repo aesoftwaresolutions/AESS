@@ -1,3 +1,4 @@
+import { CapacitorHttp } from '@capacitor/core';
 import {
   Account,
   Product,
@@ -9,11 +10,30 @@ import {
   Granularity,
 } from '../types';
 
-const API_BASE = '/api';
+// ─── Platform detection ───────────────────────────────────────────────────────
+
+/**
+ * True when running inside a Capacitor iOS/Android native shell.
+ * In that case we call the Coinbase API directly (CapacitorHttp bypasses CORS).
+ * In the browser dev server we use the Vite proxy at /api.
+ */
+function isNative(): boolean {
+  return !!(window as unknown as Record<string, unknown>).Capacitor &&
+    !!(
+      (window as unknown as Record<string, { isNativePlatform?: () => boolean }>)
+        .Capacitor?.isNativePlatform?.()
+    );
+}
+
+const COINBASE_HOST = 'https://api.coinbase.com';
+
+/** Returns the base URL for a given API path */
+function apiUrl(path: string): string {
+  return isNative() ? `${COINBASE_HOST}${path}` : `/api${path}`;
+}
 
 // ─── JWT helpers ────────────────────────────────────────────────────────────
 
-/** Encode a string (UTF-8) or byte array as Base64URL */
 function toBase64Url(input: string | Uint8Array): string {
   let binary = '';
   if (typeof input === 'string') {
@@ -25,7 +45,6 @@ function toBase64Url(input: string | Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-/** Import an EC private key from PEM (PKCS8 format required by Web Crypto) */
 async function importPrivateKey(pem: string): Promise<CryptoKey> {
   const b64 = pem
     .replace(/-----BEGIN.*?-----/g, '')
@@ -34,12 +53,11 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
 
   if (!pem.includes('BEGIN PRIVATE KEY')) {
     throw new Error(
-      'Unsupported key format. Coinbase CDP keys must be PKCS8 (-----BEGIN PRIVATE KEY-----).'
+      'Unsupported key format. Use PKCS8 (-----BEGIN PRIVATE KEY-----).'
     );
   }
 
   const keyBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-
   return crypto.subtle.importKey(
     'pkcs8',
     keyBytes,
@@ -49,7 +67,6 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   );
 }
 
-/** Generate a signed JWT for Coinbase Advanced Trade API (CDP auth) */
 async function generateJWT(
   keyName: string,
   privateKeyPem: string,
@@ -57,10 +74,8 @@ async function generateJWT(
   path: string
 ): Promise<string> {
   const cryptoKey = await importPrivateKey(privateKeyPem);
-
   const now = Math.floor(Date.now() / 1000);
-  const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
-  const nonce = Array.from(nonceBytes)
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
@@ -104,11 +119,10 @@ export function clearCredentials(): void {
   localStorage.removeItem('cb_private_key');
 }
 
-// ─── HTTP client ─────────────────────────────────────────────────────────────
+// ─── HTTP client (native-aware) ───────────────────────────────────────────────
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const creds = getCredentials();
-
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   if (creds) {
@@ -116,7 +130,26 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers['Authorization'] = `Bearer ${jwt}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const url = apiUrl(path);
+
+  if (isNative()) {
+    // Native: CapacitorHttp routes through iOS URLSession — no CORS restrictions
+    const res = await CapacitorHttp.request({
+      method,
+      url,
+      headers,
+      data: body !== undefined ? body : undefined,
+    });
+    if (res.status >= 400) {
+      const message =
+        res.data?.error_details || res.data?.message || res.data?.error || `HTTP ${res.status}`;
+      throw new Error(String(message));
+    }
+    return res.data as T;
+  }
+
+  // Browser: regular fetch through Vite proxy
+  const res = await fetch(url, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -127,9 +160,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     try {
       const err = await res.json();
       message = err.error_details || err.message || err.error || message;
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
     throw new Error(message);
   }
 
@@ -139,7 +170,6 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 // ─── API methods ─────────────────────────────────────────────────────────────
 
 export async function testConnection(): Promise<void> {
-  // Lightweight call – just list accounts with a limit of 1
   await request<unknown>('GET', '/v3/brokerage/accounts?limit=1');
 }
 
@@ -149,7 +179,7 @@ export async function getAccounts(): Promise<Account[]> {
 }
 
 export async function listProducts(productType = 'SPOT'): Promise<Product[]> {
-  const res = await request<{ products: Product[]; num_products: number }>(
+  const res = await request<{ products: Product[] }>(
     'GET',
     `/v3/brokerage/products?product_type=${productType}`
   );
@@ -169,12 +199,10 @@ export async function getCandles(
   const now = Math.floor(Date.now() / 1000);
   const start = startSec ?? now - 24 * 3600;
   const end = endSec ?? now;
-
   const res = await request<{ candles: Candle[] }>(
     'GET',
     `/v3/brokerage/products/${productId}/candles?start=${start}&end=${end}&granularity=${granularity}`
   );
-
   return (res.candles ?? []).sort((a, b) => Number(a.start) - Number(b.start));
 }
 
@@ -193,16 +221,11 @@ export async function createOrder(
   );
 }
 
-export async function listOrders(
-  status?: string,
-  productId?: string,
-  limit = 100
-): Promise<Order[]> {
+export async function listOrders(status?: string, productId?: string, limit = 100): Promise<Order[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (status) params.set('order_status', status);
   if (productId) params.set('product_id', productId);
-
-  const res = await request<{ orders: Order[]; has_next: boolean }>(
+  const res = await request<{ orders: Order[] }>(
     'GET',
     `/v3/brokerage/orders/historical/batch?${params}`
   );
@@ -210,20 +233,13 @@ export async function listOrders(
 }
 
 export async function cancelOrders(orderIds: string[]): Promise<unknown> {
-  return request<unknown>('POST', '/v3/brokerage/orders/batch_cancel', {
-    order_ids: orderIds,
-  });
+  return request<unknown>('POST', '/v3/brokerage/orders/batch_cancel', { order_ids: orderIds });
 }
 
-export async function listFills(
-  orderId?: string,
-  productId?: string,
-  limit = 100
-): Promise<Fill[]> {
+export async function listFills(orderId?: string, productId?: string, limit = 100): Promise<Fill[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (orderId) params.set('order_id', orderId);
   if (productId) params.set('product_id', productId);
-
   const res = await request<{ fills: Fill[] }>(
     'GET',
     `/v3/brokerage/orders/historical/fills?${params}`
@@ -231,7 +247,7 @@ export async function listFills(
   return res.fills ?? [];
 }
 
-// ─── Formatting helpers ──────────────────────────────────────────────────────
+// ─── Formatting helpers ───────────────────────────────────────────────────────
 
 export function fmtPrice(value: string | number, decimals = 2): string {
   const n = typeof value === 'string' ? parseFloat(value) : value;
