@@ -1,38 +1,31 @@
 import React, { useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
-import Home from './pages/Home';
-import Services from './pages/Services';
-import Process from './pages/Process';
-import About from './pages/About';
-import Contact from './pages/Contact';
-import Legal from './pages/Legal';
+import Dashboard from './pages/Dashboard';
+import Trading from './pages/Trading';
+import Portfolio from './pages/Portfolio';
+import Orders from './pages/Orders';
+import Settings from './pages/Settings';
 
-// Scroll to top helper
 const ScrollToTop = () => {
   const { pathname } = useLocation();
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [pathname]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   return null;
 };
 
-const App: React.FC = () => {
-  return (
-    <Router>
-      <ScrollToTop />
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/services" element={<Services />} />
-          <Route path="/process" element={<Process />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/contact" element={<Contact />} />
-          <Route path="/legal" element={<Legal />} />
-        </Routes>
-      </Layout>
-    </Router>
-  );
-};
+const App: React.FC = () => (
+  <Router>
+    <ScrollToTop />
+    <Layout>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/trading" element={<Trading />} />
+        <Route path="/portfolio" element={<Portfolio />} />
+        <Route path="/orders" element={<Orders />} />
+        <Route path="/settings" element={<Settings />} />
+      </Routes>
+    </Layout>
+  </Router>
+);
 
 export default App;
